@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder.AppleTV.Storyboard" version="3.0" toolsVersion="23504" targetRuntime="AppleTV" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES">
+<document type="com.apple.InterfaceBuilder.AppleTV.Storyboard" version="3.0" toolsVersion="23727" targetRuntime="AppleTV" propertyAccessControl="none" useAutolayout="YES" useTraitCollections="YES" useSafeAreas="YES" colorMatched="YES">
     <device id="appleTV" appearance="dark"/>
     <dependencies>
         <deployment identifier="tvOS"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23506"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.IBCocoaTouchPlugin" version="23721"/>
         <capability name="Named colors" minToolsVersion="9.0"/>
         <capability name="Safe area layout guides" minToolsVersion="9.0"/>
         <capability name="TVUIKit controls" minToolsVersion="10.2"/>
@@ -23,6 +23,10 @@
                         <rect key="frame" x="0.0" y="0.0" width="1920" height="1080"/>
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
+                            <imageView clipsSubviews="YES" userInteractionEnabled="NO" alpha="0.40000000000000002" contentMode="scaleAspectFit" fixedFrame="YES" image="launch Image" translatesAutoresizingMaskIntoConstraints="NO" id="Vbv-AE-XRQ">
+                                <rect key="frame" x="0.0" y="0.0" width="1920" height="1080"/>
+                                <autoresizingMask key="autoresizingMask" flexibleMaxX="YES" flexibleMaxY="YES"/>
+                            </imageView>
                             <view contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="Wfd-58-Enl" userLabel="LeftContainer">
                                 <rect key="frame" x="0.0" y="60" width="960" height="1020"/>
                                 <subviews>
@@ -60,21 +64,22 @@
                                     <constraint firstAttribute="width" constant="2" id="pfN-Ec-inW"/>
                                 </constraints>
                             </view>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="账号登录" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="0Gh-Tr-lhk">
-                                <rect key="frame" x="1061" y="180" width="287" height="91"/>
-                                <fontDescription key="fontDescription" style="UICTFontTextStyleTitle1"/>
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" misplaced="YES" text="1 请打开BiliBili官方手机客户端扫码登录  2. 如果登录失败尝试点击重新生成二维码" textAlignment="natural" lineBreakMode="tailTruncation" numberOfLines="0" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="C1r-RI-xZ8">
+                                <rect key="frame" x="1061" y="501" width="671" height="138"/>
+                                <fontDescription key="fontDescription" style="UICTFontTextStyleHeadline"/>
                                 <nil key="textColor"/>
                                 <nil key="highlightedColor"/>
                             </label>
-                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" text="1 请打开BiliBili官方手机客户端扫码登录  2. 如果登录失败尝试点击重新生成二维码" textAlignment="natural" lineBreakMode="tailTruncation" numberOfLines="0" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="C1r-RI-xZ8">
-                                <rect key="frame" x="1061" y="321" width="671" height="138"/>
-                                <fontDescription key="fontDescription" style="UICTFontTextStyleHeadline"/>
+                            <label opaque="NO" userInteractionEnabled="NO" contentMode="left" horizontalHuggingPriority="251" verticalHuggingPriority="251" misplaced="YES" text="账号登录" textAlignment="natural" lineBreakMode="tailTruncation" baselineAdjustment="alignBaselines" adjustsFontSizeToFit="NO" translatesAutoresizingMaskIntoConstraints="NO" id="0Gh-Tr-lhk">
+                                <rect key="frame" x="1061" y="339" width="287" height="91"/>
+                                <fontDescription key="fontDescription" style="UICTFontTextStyleTitle1"/>
                                 <nil key="textColor"/>
                                 <nil key="highlightedColor"/>
                             </label>
                         </subviews>
                         <viewLayoutGuide key="safeArea" id="WhP-MT-vJ1"/>
                         <constraints>
+                            <constraint firstItem="0Gh-Tr-lhk" firstAttribute="centerY" secondItem="oNF-CR-TuM" secondAttribute="centerY" constant="-140" id="3bj-KV-aFI"/>
                             <constraint firstItem="C1r-RI-xZ8" firstAttribute="top" secondItem="0Gh-Tr-lhk" secondAttribute="bottom" constant="50" id="64D-Hm-kzz"/>
                             <constraint firstItem="C1r-RI-xZ8" firstAttribute="leading" secondItem="LE2-W0-d4f" secondAttribute="trailing" constant="100" id="Ayi-66-98d"/>
                             <constraint firstItem="LE2-W0-d4f" firstAttribute="centerX" secondItem="oNF-CR-TuM" secondAttribute="centerX" id="FmX-lj-r2r"/>
@@ -82,7 +87,6 @@
                             <constraint firstAttribute="bottom" secondItem="Wfd-58-Enl" secondAttribute="bottom" id="KoN-XF-jsV"/>
                             <constraint firstItem="0Gh-Tr-lhk" firstAttribute="leading" secondItem="LE2-W0-d4f" secondAttribute="trailing" constant="100" id="P16-nL-kHD"/>
                             <constraint firstItem="Wfd-58-Enl" firstAttribute="leading" secondItem="oNF-CR-TuM" secondAttribute="leading" id="bTz-QW-sdi"/>
-                            <constraint firstItem="0Gh-Tr-lhk" firstAttribute="top" secondItem="WhP-MT-vJ1" secondAttribute="top" constant="120" id="dWe-au-ZGx"/>
                             <constraint firstItem="Wfd-58-Enl" firstAttribute="top" secondItem="WhP-MT-vJ1" secondAttribute="top" id="drs-SB-Rg7"/>
                             <constraint firstItem="Wfd-58-Enl" firstAttribute="width" secondItem="oNF-CR-TuM" secondAttribute="width" multiplier="0.5" id="sSS-F4-bUc"/>
                             <constraint firstItem="LE2-W0-d4f" firstAttribute="bottom" secondItem="WhP-MT-vJ1" secondAttribute="bottom" id="zNA-PP-Dza"/>
@@ -826,6 +830,7 @@
         <image name="hand.thumbsup.fill" catalog="system" width="128" height="115"/>
         <image name="heart" catalog="system" width="128" height="109"/>
         <image name="heart.fill" catalog="system" width="128" height="109"/>
+        <image name="launch Image" width="1920" height="1080"/>
         <image name="list.bullet.rectangle" catalog="system" width="128" height="96"/>
         <image name="play" catalog="system" width="120" height="128"/>
         <image name="play.fill" catalog="system" width="120" height="128"/>
