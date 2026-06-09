@@ -128,6 +128,8 @@ class SettingsViewController: UIViewController {
                     self?.present(controller, animated: true)
                 }
 
+                TopShelfUpload()
+
                 Actions(title: "视频每行显示个数", message: "重启app生效",
                         current: Settings.displayStyle.desp,
                         options: FeedDisplayStyle.allCases.filter({ !$0.hideInSetting }),
@@ -319,6 +321,37 @@ extension SettingsViewController {
         return CellModel(title: title, desp: desp()) { update in
             onSelect?()
             update()
+        }
+    }
+
+    func TopShelfUpload() -> CellModel {
+        CellModel(
+            title: "手机上传 Top Shelf 图片",
+            desp: TopShelfImageUploadServer.shared.uploadURLString ?? "未启动"
+        ) { [weak self] update in
+            do {
+                let url = try TopShelfImageUploadServer.shared.start()
+                let alert = UIAlertController(
+                    title: "手机上传 Top Shelf 图片",
+                    message: "请让手机和 Apple TV 连接同一局域网，然后在手机浏览器打开：\n\(url)",
+                    preferredStyle: .alert
+                )
+
+                alert.addAction(UIAlertAction(title: "停止服务", style: .destructive) { _ in
+                    TopShelfImageUploadServer.shared.stop()
+                    update()
+                })
+                alert.addAction(UIAlertAction(title: "确定", style: .cancel) { _ in
+                    update()
+                })
+                self?.present(alert, animated: true)
+                update()
+            } catch {
+                let alert = UIAlertController(title: "启动失败", message: error.localizedDescription, preferredStyle: .alert)
+                alert.addAction(.init(title: "确定", style: .cancel))
+                self?.present(alert, animated: true)
+                update()
+            }
         }
     }
 }

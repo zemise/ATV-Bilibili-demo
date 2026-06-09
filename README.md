@@ -25,6 +25,23 @@
 - 云视听投屏
 - HDR播放
 - 字幕
+- 手机上传自定义 Top Shelf 图片
+
+### 自定义 Top Shelf 图片
+
+本项目支持在 Apple TV 运行时从手机上传图片替换系统首页的 Top Shelf 展示图。
+
+使用方式：
+1. 在 Apple TV 上打开 App 的设置页。
+2. 选择“手机上传 Top Shelf 图片”。
+3. 确保手机和 Apple TV 在同一局域网内，然后用手机浏览器打开弹窗中的地址。
+4. 上传一张横向高分辨率图片。系统会按 Top Shelf 展示区域自动适配。
+5. 如需恢复内置默认展示，使用上传页中的“恢复默认图片”。
+
+开发和签名要求：
+- 主 App 和 `BilibiliTopShelfExtension` 都需要开启同一个 App Group：`group.com.zemise.tv.BilibiliLive`。
+- 自定义图片保存在 App Group 容器的 `Library/Caches` 下。
+- 上传时会为图片生成新的文件名，避免 tvOS 复用旧 Top Shelf 图片缓存。
 
  ![](imgs/1.jpg)
  ![](imgs/2.jpg)
