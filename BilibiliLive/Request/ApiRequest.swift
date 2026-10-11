@@ -260,6 +260,7 @@ enum ApiRequest {
             let param: String
             let args: Args
             let avatar_info: Avatar
+            let player_args: PlayerArgs?
             let idx: Int
             let cover: String
             let goto: String
@@ -269,10 +270,11 @@ enum ApiRequest {
             let cover_left_text_1: String?
             let cover_left_text_2: String?
             let cover_left_text_3: String?
+            let cover_right_text: String?
 
             enum CodingKeys: String, CodingKey {
-                case can_play, title, param, args, idx, cover, goto, top_rcmd_reason, bottom_rcmd_reason, desc
-                case cover_left_text_1, cover_left_text_2, cover_left_text_3
+                case can_play, title, param, args, idx, cover, goto, top_rcmd_reason, bottom_rcmd_reason, desc, player_args
+                case cover_left_text_1, cover_left_text_2, cover_left_text_3, cover_right_text
                 case avatar_info = "avatar"
             }
 
@@ -301,13 +303,13 @@ enum ApiRequest {
             var overlay: DisplayOverlay? {
                 var leftItems = [DisplayOverlay.DisplayOverlayItem]()
                 var rightItems = [DisplayOverlay.DisplayOverlayItem]()
-                if let text = cover_left_text_2 {
+                if let text = cover_left_text_1 {
                     leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "play.rectangle", text: text))
                 }
-                if let text = cover_left_text_3 {
+                if let text = cover_left_text_2 {
                     leftItems.append(DisplayOverlay.DisplayOverlayItem(icon: "list.bullet.rectangle", text: text))
                 }
-                if let text = cover_left_text_1 {
+                if let text = cover_right_text ?? cover_left_text_3 {
                     rightItems.append(DisplayOverlay.DisplayOverlayItem(icon: nil, text: text))
                 }
                 return DisplayOverlay(leftItems: leftItems, rightItems: rightItems)
@@ -321,6 +323,46 @@ enum ApiRequest {
 
         struct Avatar: Codable, Hashable {
             let cover: String?
+        }
+
+        struct PlayerArgs: Codable, Hashable {
+            let aid: Int?
+            let cid: Int?
+            let duration: Int?
+            let type: String?
+
+            enum CodingKeys: String, CodingKey {
+                case aid, cid, duration, type
+            }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                if let intVal = try? container.decodeIfPresent(Int.self, forKey: .aid) {
+                    aid = intVal
+                } else if let stringVal = try? container.decodeIfPresent(String.self, forKey: .aid) {
+                    aid = Int(stringVal)
+                } else {
+                    aid = nil
+                }
+
+                if let intVal = try? container.decodeIfPresent(Int.self, forKey: .cid) {
+                    cid = intVal
+                } else if let stringVal = try? container.decodeIfPresent(String.self, forKey: .cid) {
+                    cid = Int(stringVal)
+                } else {
+                    cid = nil
+                }
+
+                if let intVal = try? container.decodeIfPresent(Int.self, forKey: .duration) {
+                    duration = intVal
+                } else if let stringVal = try? container.decodeIfPresent(String.self, forKey: .duration) {
+                    duration = Int(stringVal)
+                } else {
+                    duration = nil
+                }
+
+                type = try? container.decodeIfPresent(String.self, forKey: .type)
+            }
         }
     }
 
@@ -401,12 +443,12 @@ enum ApiRequest {
         }
     }
 
-    static func requestUpSpaceVideo(mid: Int, lastAid: Int?, pageSize: Int = 20) async throws -> [UpSpaceListData] {
+    static func requestUpSpaceVideo(mid: Int, lastAid: Int?, pageSize: Int = 20, order: String = "pubdate") async throws -> [UpSpaceListData] {
         struct Resp: Codable {
             let item: [UpSpaceListData]
         }
 
-        var param: Parameters = ["vmid": mid, "ps": pageSize, "actionKey": "appkey", "disable_rcmd": 0, "fnval": 976, "fnver": 0, "force_host": 0, "fourk": 1, "order": "pubdate", "player_net": 1, "qn": 120]
+        var param: Parameters = ["vmid": mid, "ps": pageSize, "actionKey": "appkey", "disable_rcmd": 0, "fnval": 976, "fnver": 0, "force_host": 0, "fourk": 1, "order": order, "player_net": 1, "qn": 120]
         if let lastAid {
             param["aid"] = lastAid
         }

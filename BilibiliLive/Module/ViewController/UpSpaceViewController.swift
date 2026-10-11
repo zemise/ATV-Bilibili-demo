@@ -14,6 +14,7 @@ class UpSpaceViewController: StandardVideoCollectionViewController<ApiRequest.Up
     var mid: Int!
 
     private var lastAid: Int?
+    private var sortByPlayCount = false
     private var info: WebRequest.UpSpaceInfo?
     private var relation: WebRequest.UpSpaceRelation?
     private let blockedMessageLabel = UILabel()
@@ -28,8 +29,8 @@ class UpSpaceViewController: StandardVideoCollectionViewController<ApiRequest.Up
         ) { [weak self] headerView, indexPath in
             headerView.nameLabel.text = self?.info?.name ?? "-"
             headerView.despLabel.text = self?.info?.sign ?? "-"
-            if let face = self?.info?.face {
-                headerView.imageView.kf.setImage(with: face, options: [.processor(DownsamplingImageProcessor(size: CGSize(width: 80, height: 80))), .processor(RoundCornerImageProcessor(radius: .widthFraction(0.5))), .cacheSerializer(FormatIndicatedCacheSerializer.png)])
+            if let avatar = self?.info?.avatar(size: 240) {
+                headerView.imageView.kf.setImage(with: avatar, options: [.processor(DownsamplingImageProcessor(size: CGSize(width: 80, height: 80))), .processor(RoundCornerImageProcessor(radius: .widthFraction(0.5))), .cacheSerializer(FormatIndicatedCacheSerializer.png)])
             }
             headerView.mid = self?.mid
             headerView.followButton.isOn = self?.info?.is_followed ?? false
@@ -37,6 +38,11 @@ class UpSpaceViewController: StandardVideoCollectionViewController<ApiRequest.Up
             headerView.followButton.isHidden = self?.relation?.is_blocked ?? false
             headerView.onBlockTapped = { [weak self, weak headerView] isBlocked in
                 headerView?.followButton.isHidden = isBlocked
+                self?.reloadData()
+            }
+            headerView.sortButton.isOn = self?.sortByPlayCount ?? false
+            headerView.onSortTapped = { [weak self] byPlayCount in
+                self?.sortByPlayCount = byPlayCount
                 self?.reloadData()
             }
         }
@@ -82,7 +88,7 @@ class UpSpaceViewController: StandardVideoCollectionViewController<ApiRequest.Up
             return []
         }
 
-        let res = try await ApiRequest.requestUpSpaceVideo(mid: mid, lastAid: lastAid)
+        let res = try await ApiRequest.requestUpSpaceVideo(mid: mid, lastAid: lastAid, order: sortByPlayCount ? "click" : "pubdate")
         lastAid = res.last?.aid
         return res
     }
