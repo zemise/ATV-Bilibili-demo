@@ -33,6 +33,7 @@ class VideoPlayerViewModel {
     var onPlayInfoChanged: ((PlayInfo) -> Void)?
     var onShowDetail: ((PlayInfo) -> Void)?
     var sequenceProvider: VideoSequenceProvider?
+    var startPositionProvider: (() -> Double?)?
 
     private var playInfo: PlayInfo
     private let playMode: VideoPlayerMode
@@ -41,6 +42,7 @@ class VideoPlayerViewModel {
     private let previewMuted: Bool
     private let startTimeOverride: Int?
     private let startTimeOverrideContentIdentity: String
+    private let startTimeOverrideCid: Int?
     private var videoDetail: VideoDetail?
     private var cancellable = Set<AnyCancellable>()
     private var loadTask: Task<Void, Never>?
@@ -60,6 +62,7 @@ class VideoPlayerViewModel {
         self.previewMuted = previewMuted
         self.startTimeOverride = startTimeOverride
         startTimeOverrideContentIdentity = playInfo.contentIdentity
+        startTimeOverrideCid = playInfo.cid
     }
 
     var currentPlayInfo: PlayInfo {
@@ -99,7 +102,10 @@ class VideoPlayerViewModel {
 
             let danmuProvider = VideoDanmuProvider(enableDanmuFilter: Settings.enableDanmuFilter,
                                                    enableDanmuRemoveDup: Settings.enableDanmuRemoveDup)
-            await danmuProvider.initVideo(cid: data.cid, startPos: data.playerStartPos ?? 0)
+            // Previews don't install a danmaku plugin, so they need no danmaku requests.
+            if playMode != .preview {
+                await danmuProvider.initVideo(cid: data.cid, startPos: data.playerStartPos ?? 0)
+            }
             guard !Task.isCancelled, loadGeneration == generation else { return }
 
             playInfo = resolvedPlayInfo
@@ -274,13 +280,14 @@ class VideoPlayerViewModel {
         for info in priority {
             guard !Task.isCancelled else { return }
             await playContextCache.preload(playInfo: info, mode: .regular)
+            guard !Task.isCancelled else { return }
+            // Prepare each neighbor as soon as its context is ready, rather than
+            // waiting for the previous video's requests before warming the next.
+            await mediaWarmupManager?.preload(playInfo: info)
         }
         guard !Task.isCancelled else { return }
         await playContextCache.trim(keeping: priority)
-        for info in priority {
-            guard !Task.isCancelled else { return }
-            await mediaWarmupManager?.preload(playInfo: info)
-        }
+        await mediaWarmupManager?.trim(keeping: priority)
     }
 
     private func generatePlayerPlugin(_ data: PlayerDetailData,
@@ -292,7 +299,11 @@ class VideoPlayerViewModel {
                                           reportWatchHistory: playMode != .preview,
                                           minimizeStalling: true,
                                           isMuted: playMode == .preview && previewMuted,
-                                          mediaWarmupManager: playMode == .feedFlow ? mediaWarmupManager : nil)
+                                          preferFastStartup: playMode == .preview,
+                                          mediaWarmupManager: playMode != .regular ? mediaWarmupManager : nil)
+        if playInfo.contentIdentity == startTimeOverrideContentIdentity, playInfo.cid == startTimeOverrideCid {
+            playplugin.startPositionProvider = startPositionProvider
+        }
         playplugin.onLoadFailure = { [weak self] message in
             self?.loadResult.send(.failure(message))
         }

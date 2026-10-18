@@ -317,12 +317,13 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
     }
 
     func setBilibili(info: VideoPlayURLInfo, subtitles: [SubtitleData], aid: Int, maxQuality: Int? = nil, streamIndex: Int? = nil, preferredHost: String? = nil) {
+        Logger.info("[playback-codecs] aid=\(aid) offered=\(Set(info.dash.video.map(\.codecs)).sorted().joined(separator: ",")) selected=\(Set(info.dash.playbackVideoStreams.map(\.codecs)).sorted().joined(separator: ","))")
         playInfo = info
         self.aid = aid
         self.preferredHost = preferredHost
         reset()
         hasSubtitle = subtitles.count > 0
-        var videos = info.dash.video
+        var videos = info.dash.playbackVideoStreams
         if Settings.preferAvc {
             let videosMap = Dictionary(grouping: videos, by: { $0.id })
             for (key, values) in videosMap {
@@ -339,7 +340,9 @@ class BilibiliVideoResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelega
         // 1. 如果用户手动选择了具体的流（streamIndex 不为 nil），只使用该流
         // 2. 如果用户手动选择了画质（maxQuality 不为 nil），只保留该画质的流（强制模式）
         // 3. 如果是默认模式，使用设置限制并保留多级画质作为后备（自适应模式）
-        if let streamIndex = streamIndex, streamIndex < info.dash.video.count {
+        if let streamIndex, info.dash.video.indices.contains(streamIndex),
+           info.dash.playbackVideoStreams.contains(info.dash.video[streamIndex])
+        {
             // 用户选择了具体的流，直接使用该流
             videos = [info.dash.video[streamIndex]]
         } else if let maxQuality = maxQuality {
@@ -589,6 +592,22 @@ enum BVideoUrlUtils {
             vtt.append("\(from) --> \(to)\n\(model.content)\n\n")
         }
         return vtt
+    }
+}
+
+extension VideoPlayURLInfo.DashInfo {
+    /// tvOS 18.5 Simulator corrupts some H.264 streams even when AVPlayer plays
+    /// the original MP4 directly. HEVC decodes correctly on the same runtime.
+    /// Exclude AVC from adaptive variants when HEVC is available, since merely
+    /// preferring HEVC still lets AVPlayer switch back to a corrupt AVC stream.
+    /// When HEVC is unavailable, allow playback using the original streams.
+    /// Physical Apple TVs retain their original codec choices.
+    var playbackVideoStreams: [DashMediaInfo] {
+        #if targetEnvironment(simulator)
+            let hevc = video.filter(\.isHevc)
+            if !hevc.isEmpty { return hevc }
+        #endif
+        return video
     }
 }
 

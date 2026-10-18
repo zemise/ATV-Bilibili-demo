@@ -39,9 +39,10 @@ class BVideoQualityPlugin: NSObject, CommonPlayerPlugin {
     private func extractAvailableQualities() {
         let supportFormats = playData.videoPlayURLInfo.support_formats
         let videoStreams = playData.videoPlayURLInfo.dash.video
+        let playbackStreams = playData.videoPlayURLInfo.dash.playbackVideoStreams
 
         // 为每个视频流创建一个 QualityOption
-        availableQualities = videoStreams.enumerated().map { index, stream in
+        availableQualities = videoStreams.enumerated().filter { playbackStreams.contains($0.element) }.map { index, stream in
             // 尝试从 support_formats 中找到该画质的描述信息
             let format = supportFormats.first { $0.quality == stream.id }
             let baseName = format?.new_description ?? "画质 \(stream.id)"

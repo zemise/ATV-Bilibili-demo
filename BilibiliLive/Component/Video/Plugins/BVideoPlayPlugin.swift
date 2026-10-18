@@ -10,6 +10,7 @@ import UIKit
 
 class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
     var onLoadFailure: ((String) -> Void)?
+    var startPositionProvider: (() -> Double?)?
 
     private weak var playerVC: AVPlayerViewController?
     private var playerDelegate: BilibiliVideoResourceLoaderDelegate?
@@ -18,9 +19,11 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
     private let reportWatchHistory: Bool
     private let minimizeStalling: Bool
     private let isMuted: Bool
+    private let preferFastStartup: Bool
     private let mediaWarmupManager: PlayerMediaWarmupManager?
     private var currentQualityId: Int?
     private var currentPlaybackTime: Double = 0
+    private var hasPreparedStartPosition = false
     // 记录最近一次实际用于加载的 maxQuality/streamIndex，host 切换时原样复用，
     // 不去动用户当前的画质模式（自动多档 fallback 还是手动锁定某一档）
     private var lastMaxQuality: Int?
@@ -50,6 +53,7 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
          reportWatchHistory: Bool = true,
          minimizeStalling: Bool = true,
          isMuted: Bool = false,
+         preferFastStartup: Bool = false,
          mediaWarmupManager: PlayerMediaWarmupManager? = nil)
     {
         self.playInfo = playInfo
@@ -57,6 +61,7 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
         self.reportWatchHistory = reportWatchHistory
         self.minimizeStalling = minimizeStalling
         self.isMuted = isMuted
+        self.preferFastStartup = preferFastStartup
         self.mediaWarmupManager = mediaWarmupManager
         currentQualityId = playData.videoPlayURLInfo.quality
     }
@@ -84,8 +89,8 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
     }
 
     func playerWillStart(player: AVPlayer) {
-        if let playerStartPos = playData.playerStartPos {
-            player.seek(to: CMTime(seconds: Double(playerStartPos), preferredTimescale: 1), toleranceBefore: .zero, toleranceAfter: .zero)
+        if !hasPreparedStartPosition, let playerStartPos = startPositionProvider?() ?? playData.playerStartPos.map(Double.init) {
+            player.seek(to: CMTime(seconds: playerStartPos, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         }
     }
 
@@ -322,6 +327,10 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
     }
 
     func playerDidDismiss(playerVC: AVPlayerViewController) {
+        savePlaybackProgress(playerVC: playerVC)
+    }
+
+    func savePlaybackProgress(playerVC: AVPlayerViewController) {
         guard reportWatchHistory else { return }
         guard let currentTime = playerVC.player?.currentTime().seconds, currentTime > 0 else { return }
         WebRequest.reportWatchHistory(aid: playData.aid, cid: playData.cid, currentTime: Int(currentTime), epid: playData.epid, seasonId: playData.seasonId, subType: playData.subType)
@@ -329,7 +338,7 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
 
     /// 与资源加载器选主视频流的逻辑对齐，取出该流各 CDN host 的代表 URL，供起播轻量测速。
     private func primaryCDNCandidates(from info: VideoPlayURLInfo, maxQuality: Int?, streamIndex: Int?) -> [String] {
-        var videos = info.dash.video
+        var videos = info.dash.playbackVideoStreams
         if Settings.preferAvc {
             let videosMap = Dictionary(grouping: videos, by: { $0.id })
             for (key, values) in videosMap {
@@ -338,7 +347,9 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
                 }
             }
         }
-        if let streamIndex, streamIndex < info.dash.video.count {
+        if let streamIndex, info.dash.video.indices.contains(streamIndex),
+           info.dash.playbackVideoStreams.contains(info.dash.video[streamIndex])
+        {
             videos = [info.dash.video[streamIndex]]
         } else if let maxQuality {
             let matching = videos.filter { $0.id == maxQuality }
@@ -451,7 +462,13 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
             playerVC.appliesPreferredDisplayCriteriaAutomatically = shouldApplyContentMatch(delegate: delegate)
         }
 
-        await prepare(toPlay: asset, generation: generation)
+        let bufferedPlayer = preferFastStartup && !isQualitySwitch
+            ? prepared.takePreviewPlayer(startTime: Double(playData.playerStartPos ?? 0)) : nil
+        hasPreparedStartPosition = bufferedPlayer != nil
+        if bufferedPlayer != nil {
+            Logger.info("[feed-preview] buffered-player aid=\(playData.aid)")
+        }
+        await prepare(toPlay: asset, generation: generation, bufferedPlayer: bufferedPlayer)
     }
 
     private func preparedMedia(urlInfo: VideoPlayURLInfo,
@@ -475,7 +492,7 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
         lastStreamIndex = streamIndex
 
         var resolvedHost = preferredHost
-        if resolvedHost == nil {
+        if resolvedHost == nil, !preferFastStartup {
             let candidates = primaryCDNCandidates(from: urlInfo, maxQuality: maxQuality, streamIndex: streamIndex)
             if let best = await CDNDiagnostics.pickFastestHost(urls: candidates) {
                 resolvedHost = best
@@ -535,12 +552,17 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
     }
 
     @MainActor
-    func prepare(toPlay asset: AVURLAsset, generation: Int) async {
+    func prepare(toPlay asset: AVURLAsset, generation: Int, bufferedPlayer: AVPlayer? = nil) async {
         guard loadGeneration == generation,
               !Task.isCancelled,
               let playerVC
-        else { return }
-        let playerItem = AVPlayerItem(asset: asset)
+        else {
+            bufferedPlayer?.pause()
+            bufferedPlayer?.replaceCurrentItem(with: nil)
+            return
+        }
+        let player = bufferedPlayer ?? AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        guard let playerItem = player.currentItem else { return }
 
         // 设置 preferredPeakBitRate 为一个很高的值，让 AVPlayer 优先选择高码率流
         // 0 表示无限制，让 AVPlayer 根据网络条件自动选择最高可用码率
@@ -550,9 +572,8 @@ class BVideoPlayPlugin: NSObject, CommonPlayerPlugin {
         // 实测 CDN 吞吐充裕，不再需要这么激进的预缓冲。60s 在连续快进时的副作用是：
         // 每次 seek 都会立刻为新位置起一大批 60s 的 range 请求，下一个 seek 一来又整体取消重来，
         // 密集 seek 下网络连接层疲于开连接/取消，表现为长时间无响应。降到 15s 大幅减少这种抖动。
-        playerItem.preferredForwardBufferDuration = 15
+        playerItem.preferredForwardBufferDuration = preferFastStartup ? 2 : 15
 
-        let player = AVPlayer(playerItem: playerItem)
         player.automaticallyWaitsToMinimizeStalling = minimizeStalling
         player.isMuted = isMuted
         guard loadGeneration == generation, !Task.isCancelled else {

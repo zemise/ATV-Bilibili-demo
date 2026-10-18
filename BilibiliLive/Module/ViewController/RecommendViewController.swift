@@ -4,6 +4,12 @@ import UIKit
 final class RecommendViewController: UIViewController, BLTabBarContentVCProtocol {
     private var activeMode: Bool?
     private var contentViewController: UIViewController?
+    private let featuredDataSource = FeaturedFeedFlowDataSource()
+
+    func prepareInitialRecommendations() {
+        guard Settings.recommendFeedFlowEnabled else { return }
+        featuredDataSource.prefetchFirstPage()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -27,7 +33,7 @@ final class RecommendViewController: UIViewController, BLTabBarContentVCProtocol
         let usesFeedFlow = Settings.recommendFeedFlowEnabled
         guard activeMode != usesFeedFlow else { return }
 
-        let next = usesFeedFlow ? FeaturedBrowserViewController() : FeedViewController()
+        let next = usesFeedFlow ? FeaturedBrowserViewController(dataSource: featuredDataSource) : FeedViewController()
         contentViewController?.willMove(toParent: nil)
         contentViewController?.view.removeFromSuperview()
         contentViewController?.removeFromParent()
