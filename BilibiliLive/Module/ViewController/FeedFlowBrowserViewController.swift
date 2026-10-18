@@ -9,19 +9,25 @@ import SnapKit
 import UIKit
 
 class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol {
-    private let preloadDelayNs: UInt64 = 1_000_000_000
+    // Debounce rapid focus changes without adding a full second to every preview.
+    private let preloadDelayNs: UInt64 = 150_000_000
     private let dataSource: FeedFlowDataSource
 
     private var items = [FeedFlowItem]()
     private var focusedIndex = 0
     private var isLoading = false
     private var previewTask: Task<Void, Never>?
+    private var previewLoadingTask: Task<Void, Never>?
     private var playbackWarmupTask: Task<Void, Never>?
+    private var previewPreloadTask: Task<Void, Never>?
     private var dataLoadTask: Task<Void, Never>?
     private var loadMoreTask: Task<[FeedFlowItem], Error>?
     private var loadGeneration = 0
     private let playContextCache = PlayContextCache()
     private lazy var mediaWarmupManager = PlayerMediaWarmupManager(playContextCache: playContextCache)
+    private lazy var previewMediaWarmupManager = PlayerMediaWarmupManager(playContextCache: playContextCache, mode: .preview)
+    private var previewScheduledAt = Date()
+    private var initialLoadStartedAt: Date?
     private lazy var sequenceProvider = VideoSequenceProvider(seq: [])
     private var lastPlayedItemIdentity: String?
     private var isPresentingFeedFlow = false
@@ -164,7 +170,9 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
     deinit {
         NotificationCenter.default.removeObserver(self)
         previewTask?.cancel()
+        previewLoadingTask?.cancel()
         playbackWarmupTask?.cancel()
+        previewPreloadTask?.cancel()
         dataLoadTask?.cancel()
         loadMoreTask?.cancel()
     }
@@ -211,6 +219,7 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
         activeReloadToken = dataSource.reloadToken
         dataSource.reset()
         suspendPreview(cancelWarmups: true)
+        initialLoadStartedAt = Date()
         items = []
         focusedIndex = 0
         lastPlayedItemIdentity = nil
@@ -238,6 +247,8 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
     @MainActor
     private func loadMoreItemsIfNeeded(targetCount: Int, maxSourcePages: Int) async {
         guard !isLoading else { return }
+        // The first preview gets the network before speculative pagination.
+        guard initialLoadStartedAt == nil || items.isEmpty || isPresentingFeedFlow else { return }
         let generation = loadGeneration
         let activeIndex = max(focusedIndex, sequenceProvider.currentIndex)
         guard items.count < targetCount || items.count - activeIndex - 1 < dataSource.trailingPrefetchTargetCount else { return }
@@ -306,7 +317,7 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
         previewLoadingView.stopAnimating()
         emptyStateLabel.isHidden = true
         listCollectionView.reloadData()
-        syncSelectionFromSequenceProvider()
+        syncSelectionFromSequenceProvider(immediatePreview: true)
     }
 
     @MainActor
@@ -334,6 +345,9 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
         }
         listCollectionView.performBatchUpdates {
             listCollectionView.insertItems(at: indexPaths)
+        }
+        if previewController?.view.alpha == 1, items.indices.contains(focusedIndex) {
+            warmPreviewNeighbors(for: items[focusedIndex])
         }
     }
 
@@ -459,34 +473,45 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
     }
 
     private func revealPreviewPlaybackStarted(controller: VideoPlayerViewController) {
+        Logger.info("[feed-preview] first-frame aid=\(controller.currentPlayInfo.aid) elapsed=\(Int(Date().timeIntervalSince(previewScheduledAt) * 1000))ms")
+        previewLoadingTask?.cancel()
+        previewLoadingTask = nil
         previewLoadingView.stopAnimating()
-        UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseInOut) {
+        let fadeDuration = Date().timeIntervalSince(previewScheduledAt) < 0.2 ? 0.12 : 0.3
+        UIView.animate(withDuration: fadeDuration, delay: 0, options: .curveEaseInOut) {
             controller.view.alpha = 1
             self.previewPlaceholderView.alpha = 0
         }
     }
 
-    private func schedulePreview(for item: FeedFlowItem) {
+    private func schedulePreview(for item: FeedFlowItem, immediate: Bool = false) {
+        previewScheduledAt = Date()
         previewTask?.cancel()
         playbackWarmupTask?.cancel()
-        Task { [mediaWarmupManager] in
-            await mediaWarmupManager.cancelAll()
-        }
+        previewPreloadTask?.cancel()
         removePreviewController()
         restorePreviewPlaceholder(animated: false)
         updatePreviewTexts(with: item)
-        previewLoadingView.startAnimating()
+        // A prepared preview can display in under 200ms; avoid flashing a
+        // spinner for it while still indicating genuinely longer waits.
+        previewLoadingTask?.cancel()
+        previewLoadingView.stopAnimating()
+        previewLoadingTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.previewLoadingView.startAnimating()
+        }
         emptyStateLabel.isHidden = true
         previewTask = Task { [weak self] in
             guard let self else { return }
-            try? await Task.sleep(nanoseconds: preloadDelayNs)
-            guard !Task.isCancelled else { return }
-            await playContextCache.preload(playInfo: item.playInfo, mode: .preview)
-            let neighboringItems = self.neighborPlayInfos(around: self.focusedIndex)
-            for neighbor in neighboringItems {
-                await playContextCache.preload(playInfo: neighbor, mode: .preview)
+            if !immediate, !(await previewMediaWarmupManager.isPreviewBuffered(for: item.playInfo)) {
+                try? await Task.sleep(nanoseconds: preloadDelayNs)
             }
+            guard !Task.isCancelled else { return }
+            let neighboringItems = self.neighborPlayInfos(around: self.focusedIndex)
             await playContextCache.trim(keeping: neighboringItems)
+            await mediaWarmupManager.trim(keeping: neighboringItems)
+            await previewMediaWarmupManager.trim(keeping: neighboringItems)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard !Task.isCancelled,
@@ -507,9 +532,21 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
         let controller = VideoPlayerViewController(playInfo: item.playInfo,
                                                    playMode: .preview,
                                                    playContextCache: playContextCache,
+                                                   mediaWarmupManager: previewMediaWarmupManager,
                                                    previewMuted: false)
         controller.onLoadFailure = { [weak self, weak controller] _ in
             guard let self, let controller, self.previewController === controller else { return }
+            self.previewLoadingTask?.cancel()
+            self.previewLoadingTask = nil
+            let wasInitialLoad = self.initialLoadStartedAt != nil
+            self.initialLoadStartedAt = nil
+            if wasInitialLoad {
+                self.dataLoadTask = Task { [weak self] in
+                    guard let self else { return }
+                    await self.loadMoreItemsIfNeeded(targetCount: self.dataSource.trailingPrefetchTargetCount,
+                                                     maxSourcePages: self.dataSource.trailingMaxSourcePages)
+                }
+            }
             self.previewLoadingView.stopAnimating()
             self.previewHintLabel.text = "预览加载失败，按确认键可直接进入播放"
             self.restorePreviewPlaceholder(animated: false)
@@ -517,10 +554,16 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
         controller.onPlaybackStarted = { [weak self, weak controller] in
             guard let self, let controller, self.previewController === controller else { return }
             self.revealPreviewPlaybackStarted(controller: controller)
-            self.playbackWarmupTask?.cancel()
-            self.playbackWarmupTask = Task { [weak self] in
-                await self?.warmupPlaybackMedia(for: item)
+            if let startedAt = self.initialLoadStartedAt {
+                Logger.info("[feed-preview] entry-first-play elapsed=\(Int(Date().timeIntervalSince(startedAt) * 1000))ms")
+                self.initialLoadStartedAt = nil
+                self.dataLoadTask = Task { [weak self] in
+                    guard let self else { return }
+                    await self.loadMoreItemsIfNeeded(targetCount: self.dataSource.trailingPrefetchTargetCount,
+                                                     maxSourcePages: self.dataSource.trailingMaxSourcePages)
+                }
             }
+            self.warmPreviewNeighbors(for: item)
         }
         addChild(controller)
         controller.view.alpha = 0
@@ -531,6 +574,36 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
         controller.didMove(toParent: self)
         controller.view.isUserInteractionEnabled = false
         previewController = controller
+    }
+
+    private func warmPreviewNeighbors(for item: FeedFlowItem) {
+        // Neighbors must never gate the focused video's first frame.
+        previewPreloadTask?.cancel()
+        let neighbors = prioritizedPreviewWarmupInfos(around: focusedIndex)
+        playbackWarmupTask?.cancel()
+        previewPreloadTask = Task { [weak self, previewMediaWarmupManager = self.previewMediaWarmupManager] in
+            await previewMediaWarmupManager.retainPreviewBuffers(for: neighbors)
+            guard !Task.isCancelled else { return }
+            // Warm both directions concurrently; a slow next video must
+            // not postpone buffering the video the user just left.
+            await withTaskGroup(of: Void.self) { group in
+                for info in neighbors.prefix(2) {
+                    group.addTask {
+                        await previewMediaWarmupManager.preload(playInfo: info, bufferPreview: true)
+                    }
+                }
+            }
+            for info in neighbors.dropFirst(2) {
+                guard !Task.isCancelled else { return }
+                await previewMediaWarmupManager.preload(playInfo: info)
+            }
+            guard !Task.isCancelled, let self else { return }
+            // Full-screen warmup follows preview warmup so it cannot compete
+            // with the next preview's manifest and index requests.
+            self.playbackWarmupTask = Task { [weak self] in
+                await self?.warmupPlaybackMedia(for: item)
+            }
+        }
     }
 
     private func removePreviewController() {
@@ -546,6 +619,13 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
     private func suspendPreview(cancelWarmups: Bool = true) {
         previewTask?.cancel()
         previewTask = nil
+        previewLoadingTask?.cancel()
+        previewLoadingTask = nil
+        previewPreloadTask?.cancel()
+        previewPreloadTask = nil
+        Task { [previewMediaWarmupManager] in
+            await previewMediaWarmupManager.cancelAll()
+        }
         previewLoadingView.stopAnimating()
         removePreviewController()
         restorePreviewPlaceholder(animated: false)
@@ -577,27 +657,20 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
 
     private func neighborPlayInfos(around index: Int) -> [PlayInfo] {
         let lower = max(0, index - 1)
-        let upper = min(items.count - 1, index + 1)
+        let upper = min(items.count - 1, index + 2)
         guard !items.isEmpty, lower <= upper else { return [] }
         return Array(items[lower...upper]).map(\.playInfo)
     }
 
-    private func prioritizedPlaybackWarmupInfos(for item: FeedFlowItem) -> [PlayInfo] {
-        guard let index = items.firstIndex(of: item) else { return [item.playInfo] }
-        var warmupInfos = [PlayInfo]()
-        warmupInfos.append(items[index].playInfo)
-        if items.indices.contains(index + 1) {
-            warmupInfos.append(items[index + 1].playInfo)
-        }
-        if items.indices.contains(index - 1) {
-            warmupInfos.append(items[index - 1].playInfo)
-        }
-        return warmupInfos.uniqued()
+    private func prioritizedPreviewWarmupInfos(around index: Int) -> [PlayInfo] {
+        [index + 1, index - 1, index + 2]
+            .filter { items.indices.contains($0) }
+            .map { items[$0].playInfo }
+            .uniqued()
     }
 
     private func warmupPlaybackMedia(for item: FeedFlowItem) async {
-        let warmupInfos = prioritizedPlaybackWarmupInfos(for: item)
-        await playContextCache.trim(keeping: warmupInfos)
+        let warmupInfos = [item.playInfo]
         for info in warmupInfos {
             guard !Task.isCancelled else { return }
             await playContextCache.preload(playInfo: info, mode: .regular)
@@ -645,7 +718,7 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
         syncSelectionFromSequenceProvider()
     }
 
-    private func syncSelectionFromSequenceProvider() {
+    private func syncSelectionFromSequenceProvider(immediatePreview: Bool = false) {
         guard let targetIndex = resolvedSelectionIndex() else { return }
         ensureListCollectionViewIsSynced()
         guard listCollectionView.numberOfItems(inSection: 0) > targetIndex else { return }
@@ -655,7 +728,16 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
         listCollectionView.selectItem(at: targetIndexPath, animated: false, scrollPosition: .centeredVertically)
         listCollectionView.scrollToItem(at: targetIndexPath, at: .centeredVertically, animated: false)
         refreshVisibleListCells()
-        schedulePreview(for: items[targetIndex])
+        if let preview = previewController, preview.isInlineFlowPresentation,
+           preview.currentPlayInfo.sequenceKey == items[targetIndex].playInfo.sequenceKey
+        {
+            updatePreviewTexts(with: items[targetIndex])
+            previewLoadingView.stopAnimating()
+            previewPlaceholderView.alpha = 0
+            preview.view.alpha = 1
+        } else {
+            schedulePreview(for: items[targetIndex], immediate: immediatePreview)
+        }
         setNeedsFocusUpdate()
         updateFocusIfNeeded()
     }
@@ -673,23 +755,55 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
     }
 
     private func enterFlow(at index: Int) {
-        guard items.indices.contains(index) else { return }
+        guard !isPresentingFeedFlow, presentedViewController == nil, items.indices.contains(index) else { return }
         isPresentingFeedFlow = true
         focusedIndex = index
         sequenceProvider.setCurrentIndex(index)
         lastPlayedItemIdentity = items[index].identityKey
         let startTimeOverride = previewStartTimeForFlowEntry(at: index)
+        let continuingPreview: VideoPlayerViewController?
+        if let preview = previewController,
+           preview.view.alpha == 1,
+           preview.currentPlayInfo.sequenceKey == items[index].playInfo.sequenceKey
+        {
+            preview.onPlaybackStarted = nil
+            preview.onLoadFailure = nil
+            preview.preservesPlaybackDuringReparenting = true
+            preview.willMove(toParent: nil)
+            preview.view.removeFromSuperview()
+            preview.removeFromParent()
+            previewController = nil
+            continuingPreview = preview
+        } else {
+            continuingPreview = nil
+        }
         suspendPreview(cancelWarmups: false)
+        if let continuingPreview, continuingPreview.isInlineFlowPresentation {
+            continuingPreview.resumeFullScreenFlow()
+            Logger.info("[feed-entry] resume-existing-flow aid=\(continuingPreview.currentPlayInfo.aid) position=\(continuingPreview.currentPlaybackTimeInSeconds() ?? 0)")
+            present(continuingPreview, animated: true)
+            return
+        }
         let player = VideoPlayerViewController(playInfo: items[index].playInfo,
                                                playMode: .feedFlow,
                                                playContextCache: playContextCache,
                                                mediaWarmupManager: mediaWarmupManager,
                                                startTimeOverride: startTimeOverride)
+        if let continuingPreview {
+            player.continuePreviewDuringEntry(continuingPreview)
+        }
         player.sequenceProvider = sequenceProvider
         player.onPlayInfoChanged = { [weak self] info in
             MainActor.callSafely {
                 self?.updateSelectionFromPlayInfo(info)
+                if self?.previewController?.isInlineFlowPresentation == true {
+                    self?.syncSelectionFromSequenceProvider()
+                }
             }
+        }
+        player.onReturnForInlinePlayback = { [weak self] controller in
+            guard let self else { controller.stopPlayback(); return }
+            self.retainReturnedFlow(controller)
         }
         player.onDismissWithPlayInfo = { [weak self] info in
             MainActor.callSafely {
@@ -697,6 +811,27 @@ class FeedFlowBrowserViewController: UIViewController, BLTabBarContentVCProtocol
             }
         }
         present(player, animated: true)
+    }
+
+    private func retainReturnedFlow(_ controller: VideoPlayerViewController) {
+        isPresentingFeedFlow = false
+        guard items.contains(where: { $0.playInfo.sequenceKey == controller.currentPlayInfo.sequenceKey }) else {
+            controller.stopPlayback()
+            return
+        }
+        suspendPreview(cancelWarmups: false)
+        updateSelectionFromPlayInfo(controller.currentPlayInfo)
+        controller.prepareForInlinePlayback()
+        addChild(controller)
+        previewHostView.addSubview(controller.view)
+        controller.view.snp.remakeConstraints { $0.edges.equalToSuperview() }
+        controller.didMove(toParent: self)
+        previewController = controller
+        previewLoadingView.stopAnimating()
+        previewPlaceholderView.alpha = 0
+        controller.view.alpha = 1
+        syncSelectionFromSequenceProvider()
+        Logger.info("[feed-return] retained-player aid=\(controller.currentPlayInfo.aid) position=\(controller.currentPlaybackTimeInSeconds() ?? 0)")
     }
 
     private func previewStartTimeForFlowEntry(at index: Int) -> Int? {
@@ -739,10 +874,13 @@ extension FeedFlowBrowserViewController: UICollectionViewDelegate {
         guard let nextIndexPath = context.nextFocusedIndexPath,
               items.indices.contains(nextIndexPath.item)
         else { return }
+        let alreadyScheduled = focusedIndex == nextIndexPath.item && (previewTask != nil || previewController != nil)
         focusedIndex = nextIndexPath.item
         collectionView.selectItem(at: nextIndexPath, animated: true, scrollPosition: .centeredVertically)
         sequenceProvider.setCurrentIndex(focusedIndex)
-        schedulePreview(for: items[focusedIndex])
+        if !alreadyScheduled {
+            schedulePreview(for: items[focusedIndex])
+        }
         refreshVisibleListCells()
         if items.count - focusedIndex - 1 < dataSource.trailingPrefetchTargetCount {
             Task {

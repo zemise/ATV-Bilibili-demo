@@ -175,6 +175,8 @@ class VideoPlayerViewController: CommonPlayerViewController {
     var onPlaybackStarted: (() -> Void)?
     var onPlayInfoChanged: ((PlayInfo) -> Void)?
     var onDismissWithPlayInfo: ((PlayInfo) -> Void)?
+    var onReturnForInlinePlayback: ((VideoPlayerViewController) -> Void)?
+    private(set) var isInlineFlowPresentation = false
 
     private let playMode: VideoPlayerMode
     private let playContextCache: PlayContextCache?
@@ -187,6 +189,46 @@ class VideoPlayerViewController: CommonPlayerViewController {
     private var hasRetriedCurrentItem = false
     private var isStopping = false
     private var pendingAutoTriggeredInfoActionKey: String?
+    private var transitionPreview: VideoPlayerViewController?
+    private var flowEntryStartedAt: Date?
+    private var previewHandoffTimer: Timer?
+    private weak var previewHandoffPlayer: AVPlayer?
+    private let previewHandoffPollInterval: TimeInterval = 0.01
+    private let previewHandoffTolerance: TimeInterval = 0.025
+    private var isReturningInline = false
+    private var inlineReturnScheduled = false
+
+    func prepareForInlinePlayback() {
+        isInlineFlowPresentation = true
+        preservesPlaybackDuringReparenting = true
+        configurePlaybackPresentation(showsControls: false, allowsPiP: false)
+        view.isUserInteractionEnabled = false
+    }
+
+    func resumeFullScreenFlow() {
+        isInlineFlowPresentation = false
+        preservesPlaybackDuringReparenting = true
+        configurePlaybackPresentation(showsControls: true, allowsPiP: true)
+        // Inline constraints refer to the browser's preview host. A modal root
+        // must return to UIKit-managed sizing before it is presented again.
+        view.snp.removeConstraints()
+        view.translatesAutoresizingMaskIntoConstraints = true
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.frame = UIScreen.main.bounds
+        view.isHidden = false
+        view.alpha = 1
+        view.isUserInteractionEnabled = true
+    }
+
+    func continuePreviewDuringEntry(_ preview: VideoPlayerViewController) {
+        guard playMode == .feedFlow, !isViewLoaded else { return }
+        transitionPreview = preview
+        flowEntryStartedAt = Date()
+        setPlaybackTransitionMuted(true)
+        viewModel.startPositionProvider = { [weak preview] in
+            preview?.currentPlaybackPosition()
+        }
+    }
 
     init(playInfo: PlayInfo,
          playMode: VideoPlayerMode = .regular,
@@ -210,6 +252,8 @@ class VideoPlayerViewController: CommonPlayerViewController {
         if playMode == .preview {
             showsPlaybackControls = false
             allowsPictureInPicturePlayback = false
+        } else if playMode == .feedFlow {
+            modalPresentationStyle = .fullScreen
         }
     }
 
@@ -224,6 +268,14 @@ class VideoPlayerViewController: CommonPlayerViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let preview = transitionPreview {
+            addChild(preview)
+            view.addSubview(preview.view)
+            preview.view.alpha = 1
+            preview.view.snp.remakeConstraints { $0.edges.equalToSuperview() }
+            preview.didMove(toParent: self)
+            Logger.info("[feed-entry] preview-continuing aid=\(preview.currentPlayInfo.aid) position=\(preview.currentPlaybackTimeInSeconds() ?? 0)")
+        }
         viewModel.sequenceProvider = sequenceProvider
         viewModel.onPlayInfoChanged = { [weak self] info in
             self?.handlePlayInfoChanged(info)
@@ -278,7 +330,53 @@ class VideoPlayerViewController: CommonPlayerViewController {
         viewModel.load()
     }
 
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        if playMode == .feedFlow, parent == nil, presentingViewController != nil {
+            preservesPlaybackDuringReparenting = false
+            Logger.info("[feed-entry] full-screen-visible aid=\(currentPlayInfo.aid) frame=\(view.frame)")
+        }
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        guard playMode == .feedFlow, isBeingDismissed,
+              onReturnForInlinePlayback != nil, !isCurrentPlayerInPictureInPicture
+        else { return }
+        savePlaybackProgress()
+        preservesPlaybackDuringReparenting = true
+        isReturningInline = true
+        inlineReturnScheduled = false
+        if let coordinator = transitionCoordinator {
+            inlineReturnScheduled = coordinator.animate(alongsideTransition: nil) { [self] context in
+                if context.isCancelled {
+                    preservesPlaybackDuringReparenting = false
+                    isReturningInline = false
+                } else {
+                    // Let UIKit finish removing the modal presentation before
+                    // the browser reattaches this same view as a child.
+                    DispatchQueue.main.async { [self] in completeInlineReturn() }
+                }
+            }
+        }
+    }
+
+    private func completeInlineReturn() {
+        guard isReturningInline else { return }
+        isReturningInline = false
+        inlineReturnScheduled = false
+        onReturnForInlinePlayback?(self)
+    }
+
     override func viewDidDisappear(_ animated: Bool) {
+        if preservesPlaybackDuringReparenting {
+            super.viewDidDisappear(animated)
+            if isReturningInline, !inlineReturnScheduled {
+                inlineReturnScheduled = true
+                DispatchQueue.main.async { [self] in completeInlineReturn() }
+            }
+            return
+        }
         let isExiting = isBeingDismissed || isMovingFromParent || navigationController?.isBeingDismissed == true
         let dismissPlayInfo = playMode == .feedFlow ? viewModel.currentPlayInfo : nil
         super.viewDidDisappear(animated)
@@ -296,13 +394,69 @@ class VideoPlayerViewController: CommonPlayerViewController {
         super.stopPlayback()
     }
 
-    override func playerDidStart(player: AVPlayer) {
+    override func playerReadyForDisplay(player: AVPlayer) {
         switch playMode {
         case .preview:
             onPlaybackStarted?()
-        case .feedFlow, .regular:
+        case .feedFlow:
+            if let startedAt = flowEntryStartedAt {
+                Logger.info("[feed-entry] full-stream-playing aid=\(currentPlayInfo.aid) elapsed=\(Int(Date().timeIntervalSince(startedAt) * 1000))ms preview-position=\(transitionPreview?.currentPlaybackTimeInSeconds() ?? 0) full-position=\(currentPlaybackTimeInSeconds() ?? 0)")
+            }
+            synchronizePreviewHandoff(player: player)
+        case .regular:
             break
         }
+    }
+
+    private func synchronizePreviewHandoff(player: AVPlayer) {
+        guard transitionPreview != nil, previewHandoffTimer == nil else { return }
+        previewHandoffPlayer = player
+        // Initial seek is asynchronous: the audible preview keeps advancing while
+        // the full player prepares. Catch up silently before handing over audio.
+        let timer = Timer(timeInterval: previewHandoffPollInterval, repeats: true) { [weak self, weak player] timer in
+            MainActor.callSafely {
+                guard let self, let player, let preview = self.transitionPreview,
+                      let previewTime = preview.currentPlaybackPosition()
+                else {
+                    timer.invalidate()
+                    return
+                }
+                let fullTime = player.currentTime().seconds
+                guard fullTime.isFinite else { return }
+                let delta = fullTime - previewTime
+                let rate = preview.currentPlaybackRate
+                if abs(delta) <= self.previewHandoffTolerance {
+                    player.rate = rate
+                    Logger.info("[feed-entry] synchronized-handoff delta-ms=\(Int(delta * 1000)) preview-position=\(previewTime) full-position=\(fullTime)")
+                    self.finishPreviewTransition()
+                } else if delta < 0 {
+                    player.rate = max(1, rate + 1)
+                } else {
+                    player.pause()
+                }
+            }
+        }
+        previewHandoffTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func finishPreviewTransition() {
+        previewHandoffTimer?.invalidate()
+        previewHandoffTimer = nil
+        if let preview = transitionPreview {
+            previewHandoffPlayer?.rate = preview.currentPlaybackRate
+        }
+        previewHandoffPlayer = nil
+        guard let preview = transitionPreview else { return }
+        transitionPreview = nil
+        flowEntryStartedAt = nil
+        viewModel.startPositionProvider = nil
+        preview.preservesPlaybackDuringReparenting = false
+        preview.stopPlayback()
+        preview.willMove(toParent: nil)
+        preview.view.removeFromSuperview()
+        preview.removeFromParent()
+        setPlaybackTransitionMuted(false)
     }
 
     override func playerDidStall(player: AVPlayer) {
@@ -319,6 +473,9 @@ class VideoPlayerViewController: CommonPlayerViewController {
     }
 
     private func handlePlayInfoChanged(_ info: PlayInfo) {
+        if let preview = transitionPreview, preview.currentPlayInfo.sequenceKey != info.sequenceKey {
+            finishPreviewTransition()
+        }
         neighborPreloadTask?.cancel()
         neighborPreloadTask = nil
         if currentRetryKey != info.sequenceKey {
@@ -332,12 +489,18 @@ class VideoPlayerViewController: CommonPlayerViewController {
     private func stopAsyncWork() {
         guard !isStopping else { return }
         isStopping = true
+        if isInlineFlowPresentation { savePlaybackProgress() }
+        finishPreviewTransition()
         neighborPreloadTask?.cancel()
         neighborPreloadTask = nil
         viewModel.cancelLoading()
         cancelable.removeAll()
-        Task { [mediaWarmupManager] in
-            await mediaWarmupManager?.cancelAll()
+        // Preview warmups belong to the browser and must survive replacement
+        // of an individual preview controller when focus moves to a neighbor.
+        if playMode != .preview {
+            Task { [mediaWarmupManager] in
+                await mediaWarmupManager?.cancelAll()
+            }
         }
     }
 

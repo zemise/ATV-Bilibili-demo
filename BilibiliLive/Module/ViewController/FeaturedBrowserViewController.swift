@@ -32,8 +32,8 @@ private extension ApiRequest.FeedResp.Items {
 }
 
 final class FeaturedBrowserViewController: FeedFlowBrowserViewController {
-    init() {
-        super.init(dataSource: FeaturedFeedFlowDataSource())
+    init(dataSource: FeaturedFeedFlowDataSource? = nil) {
+        super.init(dataSource: dataSource ?? FeaturedFeedFlowDataSource())
     }
 
     @available(*, unavailable)
@@ -43,6 +43,8 @@ final class FeaturedBrowserViewController: FeedFlowBrowserViewController {
 }
 
 final class FeaturedFeedFlowDataSource: FeedFlowDataSource {
+    // Show the first usable page without waiting to accumulate 12 videos.
+    var initialTargetCount: Int { 1 }
     let title = "推荐"
     let defaultPreviewHintText = "停留后自动预览，按确认键进入短视频流"
     let loadingHintText = "正在加载沉浸式推荐..."
@@ -58,6 +60,35 @@ final class FeaturedFeedFlowDataSource: FeedFlowDataSource {
     private var lastSourceIdx: Int?
     private var seenItemKeys = Set<String>()
     private var hasMore = true
+    private var firstPageTask: Task<[ApiRequest.FeedResp.Items], Error>?
+    private var firstPageRequestedAt = Date.distantPast
+
+    deinit {
+        firstPageTask?.cancel()
+    }
+
+    func prefetchFirstPage() {
+        guard firstPageTask == nil else { return }
+        firstPageRequestedAt = Date()
+        firstPageTask = Task(priority: .utility) { try await ApiRequest.getFeeds() }
+    }
+
+    private func initialSourcePage() async throws -> [ApiRequest.FeedResp.Items] {
+        let task = firstPageTask
+        firstPageTask = nil
+        if let task, Date().timeIntervalSince(firstPageRequestedAt) < 30 {
+            do {
+                let page = try await task.value
+                Logger.info("[feed-preview] initial-feed-prefetch hit")
+                return page
+            } catch {
+                try Task.checkCancellation()
+            }
+        } else {
+            task?.cancel()
+        }
+        return try await ApiRequest.getFeeds()
+    }
 
     func reset() {
         durationLimit = Settings.featuredDurationLimit
@@ -81,7 +112,7 @@ final class FeaturedFeedFlowDataSource: FeedFlowDataSource {
             if let nextSourceIdx {
                 sourceItems = try await ApiRequest.getFeeds(lastIdx: nextSourceIdx)
             } else {
-                sourceItems = try await ApiRequest.getFeeds()
+                sourceItems = try await initialSourcePage()
             }
             try Task.checkCancellation()
             pagesScanned += 1

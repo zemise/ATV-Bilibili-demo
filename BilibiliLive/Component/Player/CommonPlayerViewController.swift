@@ -14,6 +14,7 @@ class CommonPlayerViewController: UIViewController {
     private var observations = Set<NSKeyValueObservation>()
     private var rateObserver: NSKeyValueObservation?
     private var statusObserver: NSKeyValueObservation?
+    private var displayReadyTimer: Timer?
     private var playToEndObserver: Any?
     private var playbackStalledObserver: Any?
     private var isEnd = false
@@ -22,8 +23,34 @@ class CommonPlayerViewController: UIViewController {
     var autoPlayWhenReady = true
     var showsPlaybackControls = true
     var allowsPictureInPicturePlayback = true
+    var preservesPlaybackDuringReparenting = false
+    private var playbackTransitionMuted = false
+
+    var isCurrentPlayerInPictureInPicture: Bool {
+        PipRecorder.shared.playingPipViewController.contains { $0.playerVC == playerVC }
+    }
+
+    func configurePlaybackPresentation(showsControls: Bool, allowsPiP: Bool) {
+        showsPlaybackControls = showsControls
+        allowsPictureInPicturePlayback = allowsPiP
+        if isViewLoaded {
+            playerVC.showsPlaybackControls = showsControls
+            playerVC.allowsPictureInPicturePlayback = allowsPiP
+        }
+    }
+
+    func savePlaybackProgress() {
+        activePlugins.forEach { $0.savePlaybackProgress(playerVC: playerVC) }
+    }
+
+    func setPlaybackTransitionMuted(_ muted: Bool) {
+        playbackTransitionMuted = muted
+        playerVC.player?.isMuted = muted
+    }
 
     deinit {
+        observations.forEach { $0.invalidate() }
+        observations.removeAll()
         cleanUpPlayerOnExit(force: true)
     }
 
@@ -50,6 +77,7 @@ class CommonPlayerViewController: UIViewController {
 
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        guard !preservesPlaybackDuringReparenting else { return }
         activePlugins.forEach { $0.playerDidDismiss(playerVC: playerVC) }
         cleanUpPlayerOnExit()
     }
@@ -91,6 +119,7 @@ class CommonPlayerViewController: UIViewController {
 
     func playerWillStart(player: AVPlayer) {}
     func playerDidStart(player: AVPlayer) {}
+    func playerReadyForDisplay(player: AVPlayer) {}
     func playerDidEnd(player: AVPlayer) {}
     func playerDidStall(player: AVPlayer) {}
     func playerDidFail(player: AVPlayer) {}
@@ -119,14 +148,20 @@ class CommonPlayerViewController: UIViewController {
     }
 
     func currentPlaybackTimeInSeconds() -> Int? {
+        currentPlaybackPosition().map { Int($0.rounded(.down)) }
+    }
+
+    func currentPlaybackPosition() -> Double? {
         guard let seconds = playerVC.player?.currentTime().seconds,
               seconds.isFinite,
-              seconds > 0
+              seconds >= 0
         else {
             return nil
         }
-        return Int(seconds.rounded(.down))
+        return seconds
     }
+
+    var currentPlaybackRate: Float { playerVC.player?.rate ?? 0 }
 
     private func cleanUpPlayerOnExit(force: Bool = false) {
         let isPictureInPictureRunning = PipRecorder.shared.playingPipViewController.contains { $0.playerVC == playerVC }
@@ -145,6 +180,8 @@ class CommonPlayerViewController: UIViewController {
     }
 
     private func cleanUpObserver() {
+        displayReadyTimer?.invalidate()
+        displayReadyTimer = nil
         rateObserver = nil
         statusObserver = nil
         if let playToEndObserver {
@@ -161,6 +198,26 @@ class CommonPlayerViewController: UIViewController {
 extension CommonPlayerViewController {
     private func playerDidChange(player: AVPlayer?) {
         if let player {
+            if playbackTransitionMuted { player.isMuted = true }
+            displayReadyTimer?.invalidate()
+            // Observing AVPlayerViewController.isReadyForDisplay registers KVO on
+            // AVKit's internal AVPlayerLayer. Rapid preview teardown can release
+            // that layer before AVKit removes the forwarding observation.
+            // Read readiness on the main run loop instead, and stop after frame 1.
+            let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self, weak player] timer in
+                guard let self, let player, self.playerVC.player === player else {
+                    timer.invalidate()
+                    return
+                }
+                guard player.currentItem?.status == .readyToPlay,
+                      player.timeControlStatus == .playing,
+                      self.playerVC.isReadyForDisplay
+                else { return }
+                timer.invalidate()
+                self.playerReadyForDisplay(player: player)
+            }
+            displayReadyTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
             activePlugins.forEach { $0.playerDidChange(player: player) }
             rateObserver = player.observe(\.rate, options: [.old, .new]) {
                 [weak self] _player, obs in
@@ -189,9 +246,11 @@ extension CommonPlayerViewController {
     }
 
     private func observePlayerItem(_ playerItem: AVPlayerItem) {
-        statusObserver = playerItem.observe(\.status, options: [.new, .old]) {
+        // A prebuffered item is already ready before it is attached. Deliver
+        // its current state as well, otherwise the autoplay transition is lost.
+        statusObserver = playerItem.observe(\.status, options: [.initial, .new, .old]) {
             [weak self] item, _ in
-            guard let self, let player = playerVC.player else { return }
+            guard let self, let player = playerVC.player, player.currentItem === item else { return }
             switch item.status {
             case .readyToPlay:
                 isEnd = false
