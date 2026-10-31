@@ -36,7 +36,9 @@
 
 本 fork 于 2026-10-11 同步至 [原项目 `078cfde`](https://github.com/yichengchen/ATV-Bilibili-demo/commit/078cfde)，保留自定义 Top Shelf 图片上传、App Group 和 fork 的构建配置。
 
-2026-10-17 再次拉取上游确认，`upstream/main` 仍为 `078cfde`，当前 fork 已包含最新上游更新。
+2026-10-17 再次拉取上游确认，`upstream/main` 当时仍为 `078cfde`。
+
+2026-10-31 同步至 [原项目 `46904be`](https://github.com/yichengchen/ATV-Bilibili-demo/commit/46904be)，新增经典与沉浸式 Feed 长按快捷操作、稍后再看“清除已看完”入口，以及设置中默认关闭的“多 CDN 并发加速”。合并保留 fork 的 Top Shelf、App Group、模拟器 HEVC 兼容和沉浸式播放衔接；加速模式跳过旧 CDN 起播测速，快速预览继续沿用原有起播策略。
 
 本次更新包括播放流畅度与海外网络高码率优化、沉浸式浏览及内容安全过滤、头像尺寸限制，以及 UIScene 生命周期适配。沉浸式浏览可在设置的“推荐”和“关注页面”中开启。
 
@@ -57,6 +59,10 @@ xcodebuild -project BilibiliLive.xcodeproj -scheme BilibiliLive \
 构建目录应放在项目外，避免构建脚本中的 SwiftFormat 扫描生成目录及第三方依赖。
 
 2026-10-17 在 Apple TV 4K（第 3 代）/ tvOS 18.5 模拟器上完成 Debug 构建、安装和运行验证，直播列表、沉浸式推荐、预览及全屏播放均可操作。
+
+2026-10-31 上游同步后，使用 Xcode 16.4 在同一 Apple TV 4K / tvOS 18.5 模拟器完成 Debug 构建、安装与重启验证。热门视频默认播放和开启多 CDN 加速后的画面、弹幕及退出正常；两次首帧样本约为 2105ms、2234ms（不同视频，不作为性能对照）。经典与沉浸式 Feed 的长按菜单均可弹出、取消；稍后再看“清除已看完”的确认框及取消流程正常，未执行实际清除。沉浸式预览切换、全屏及返回内嵌播放正常，衔接日志进度差约 -21ms。测试后恢复多 CDN 加速为关闭。
+
+首次构建时本地 Kingfisher 缓存缺少 `Package.resolved` 锁定的 8.7.0 提交，补齐该提交后构建通过，无需修改依赖版本。构建仍有现有 Top Shelf 图片尺寸、Protobuf 生成代码弃用等警告。
 
 模拟器的 H.264 兼容处理：
 - 原始 H.264 MP4 在独立的最小 AVPlayer 程序中也出现绿色偏色和块状失真，同一文件在 macOS 原生解码正常；同一内容的 HEVC 流在 tvOS 模拟器中显示正常。故障位于本机 tvOS 模拟器的 H.264 解码/显示路径，绕过网络、DASH 转换及弹幕插件后仍可复现。
