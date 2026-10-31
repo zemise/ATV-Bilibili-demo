@@ -112,7 +112,8 @@ enum PlayerMediaFactory {
                         playerInfo: PlayerInfo?,
                         maxQuality: Int? = nil,
                         streamIndex: Int? = nil,
-                        preferredHost: String? = nil) async throws -> PreparedPlayerMedia
+                        preferredHost: String? = nil,
+                        transportMode: MediaTransportMode = .direct) async throws -> PreparedPlayerMedia
     {
         let playURL = URL(string: BilibiliVideoResourceLoaderDelegate.URLs.play)!
         let headers: [String: String] = [
@@ -126,7 +127,8 @@ enum PlayerMediaFactory {
                              aid: aid,
                              maxQuality: maxQuality,
                              streamIndex: streamIndex,
-                             preferredHost: preferredHost)
+                             preferredHost: preferredHost,
+                             transportMode: transportMode)
         asset.resourceLoader.setDelegate(delegate, queue: DispatchQueue(label: "loader.\(aid).\(UUID().uuidString)"))
         try Task.checkCancellation()
         let playable = try await asset.load(.isPlayable)
@@ -193,7 +195,10 @@ actor PlayerMediaWarmupManager {
         let resolvedPlayInfo = try await PlayInfoResolver.resolve(playInfo)
         try Task.checkCancellation()
         guard cancellationGeneration == generation else { throw CancellationError() }
-        let key = resolvedPlayInfo.sequenceKey
+        // 传输模式纳入缓存身份：直连与代理资源不得复用。创建任务时固定快照，
+        // 开关只影响新建会话，已准备的旧模式资产保持原生命周期。
+        let transportSnapshot: MediaTransportMode = Settings.multiCDNEnabled ? .accelerated : .direct
+        let key = resolvedPlayInfo.sequenceKey + "#" + transportCacheKey(for: transportSnapshot)
         if let cached = prepared[key] {
             Logger.info("[media-warmup] hit mode=\(mode.rawValue) aid=\(resolvedPlayInfo.aid)")
             touch(key)
@@ -211,7 +216,8 @@ actor PlayerMediaWarmupManager {
             return try await PlayerMediaFactory.prepare(
                 aid: resolvedPlayInfo.aid,
                 urlInfo: snapshot.videoPlayURLInfo,
-                playerInfo: snapshot.playerInfo
+                playerInfo: snapshot.playerInfo,
+                transportMode: transportSnapshot
             )
         }
 
@@ -267,6 +273,14 @@ actor PlayerMediaWarmupManager {
     private func touch(_ key: String) {
         accessOrder.removeAll { $0 == key }
         accessOrder.append(key)
+    }
+
+    private func transportCacheKey(for mode: MediaTransportMode) -> String {
+        switch mode {
+        case .direct: return "direct"
+        case .proxy: return "proxy"
+        case .accelerated: return "accel"
+        }
     }
 
     private func trimToCapacity() {
