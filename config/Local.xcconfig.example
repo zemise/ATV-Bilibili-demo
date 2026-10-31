@@ -1,0 +1,4 @@
+// Copy to Local.xcconfig and fill in your own signing configuration.
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
+BILIBILI_BUNDLE_IDENTIFIER = com.example.ATVBilibili
+// APP_GROUP_IDENTIFIER defaults to group.$(BILIBILI_BUNDLE_IDENTIFIER).

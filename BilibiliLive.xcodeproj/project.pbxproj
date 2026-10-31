@@ -63,6 +63,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		84EBD9402FD8000000F3A8B7 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = config/Shared.xcconfig; sourceTree = "<group>"; };
 		84EBD9212FD8000000F3A8B7 /* BilibiliTopShelfExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BilibiliTopShelfExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		84EBD9232FD8000000F3A8B7 /* TopShelfContentProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopShelfContentProvider.swift; sourceTree = "<group>"; };
 		84EBD9242FD8000000F3A8B7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -131,6 +132,7 @@
 		F9B57347260F5F7400771ED5 = {
 			isa = PBXGroup;
 			children = (
+				84EBD9402FD8000000F3A8B7 /* Shared.xcconfig */,
 				4930B8FD2D686DC30074E861 /* BilibiliLive */,
 				84EBD9222FD8000000F3A8B7 /* BilibiliTopShelfExtension */,
 				F9B57351260F5F7400771ED5 /* Products */,
@@ -346,7 +348,6 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = BilibiliTopShelfExtension/BilibiliTopShelfExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BilibiliTopShelfExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -354,7 +355,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.example.ATVBilibili.TopShelfExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BILIBILI_BUNDLE_IDENTIFIER).TopShelfExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
@@ -369,7 +370,6 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGN_ENTITLEMENTS = BilibiliTopShelfExtension/BilibiliTopShelfExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = BilibiliTopShelfExtension/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -377,7 +377,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.example.ATVBilibili.TopShelfExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BILIBILI_BUNDLE_IDENTIFIER).TopShelfExtension";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				SWIFT_VERSION = 5.0;
@@ -388,6 +388,7 @@
 		};
 		F9B57360260F5F7600771ED5 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 84EBD9402FD8000000F3A8B7 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
@@ -422,7 +423,6 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = "";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -452,6 +452,7 @@
 		};
 		F9B57361260F5F7600771ED5 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 84EBD9402FD8000000F3A8B7 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
@@ -486,7 +487,6 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = "";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -531,7 +531,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/BilibiliLive/Vendor",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.example.ATVBilibili;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BILIBILI_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
@@ -563,7 +563,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/BilibiliLive/Vendor",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.example.ATVBilibili;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(BILIBILI_BUNDLE_IDENTIFIER)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 3;

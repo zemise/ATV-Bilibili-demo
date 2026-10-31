@@ -4,8 +4,6 @@
 <dict>
     <key>method</key>
     <string>debugging</string>
-    <key>teamID</key>
-    <string></string>
     <key>signingStyle</key>
     <string>automatic</string>
     <key>stripSwiftSymbols</key>

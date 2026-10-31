@@ -51,7 +51,11 @@ archive: resolve
 export-options:
 	@mkdir -p "$$(dirname "$(EXPORT_OPTIONS_PLIST)")"
 	@if [ ! -f "$(EXPORT_OPTIONS_PLIST)" ]; then \
-		cp config/ExportOptions.plist "$(EXPORT_OPTIONS_PLIST)"; \
+		if [ -f config/ExportOptions.local.plist ]; then \
+			cp config/ExportOptions.local.plist "$(EXPORT_OPTIONS_PLIST)"; \
+		else \
+			cp config/ExportOptions.plist "$(EXPORT_OPTIONS_PLIST)"; \
+		fi; \
 	fi
 	plutil -lint "$(EXPORT_OPTIONS_PLIST)"
 
@@ -75,3 +79,7 @@ package-unsigned:
 	ditto -c -k --keepParent "$$stage/Payload" "$(EXPORT_PATH)/BilibiliLive-unsigned.ipa"; \
 	unzip -t "$(EXPORT_PATH)/BilibiliLive-unsigned.ipa" | tail -n 1; \
 	echo "IPA: $(EXPORT_PATH)/BilibiliLive-unsigned.ipa"
+
+.PHONY: privacy-check
+privacy-check:
+	python3 scripts/check-privacy.py

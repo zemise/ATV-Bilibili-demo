@@ -1,0 +1,5 @@
+// Public defaults. Local overrides are ignored by Git.
+DEVELOPMENT_TEAM =
+BILIBILI_BUNDLE_IDENTIFIER = org.example.ATVBilibili
+APP_GROUP_IDENTIFIER = group.$(BILIBILI_BUNDLE_IDENTIFIER)
+#include? "Local.xcconfig"

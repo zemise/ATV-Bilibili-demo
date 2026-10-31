@@ -88,3 +88,18 @@ iOSInjectionProject/
 
 # End of https://www.toptal.com/developers/gitignore/api/swift
 fastlane/README.md
+
+# Local identity, private assets, credentials and build diagnostics
+.DS_Store
+config/Local.xcconfig
+config/ExportOptions.local.plist
+config/private-assets/
+.env
+.env.*
+!.env.example
+*.p12
+*.p8
+*.mobileprovision
+*.xcarchive/
+*.xcresult/
+*.log

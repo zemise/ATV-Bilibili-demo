@@ -9,7 +9,7 @@ import Foundation
 import TVServices
 
 enum TopShelfSharedImageStore {
-    static let appGroupIdentifier = "group.org.example.ATVBilibili"
+    static let appGroupIdentifier = Bundle.main.object(forInfoDictionaryKey: "TopShelfAppGroupIdentifier") as? String ?? ""
     static let updatedNotificationName = "TopShelfImageDidUpdate"
 
     static var imageURL: URL? {
